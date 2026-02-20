@@ -3,122 +3,141 @@ from tkinter import filedialog, messagebox
 import os
 import threading
 import shutil
+import cv2
+from PIL import Image, ImageTk
 from analyzer.video_analyzer import VideoAnalyzer
 from reports.report_generator import ReportGenerator
 
-# Set Light Theme as requested by the mockup
-ctk.set_appearance_mode("Light")
-ctk.set_default_color_theme("blue")
+# Strict Branding
+D_BG = "#0D1117"
+D_ACCENT = "#00AEEF"
+D_GREEN = "#00FF9F"
+D_RED = "#FF2E2E"
+D_CARD = "#161B22"
+D_TEXT = "#C9D1D9"
 
 class VideoAnalyzerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Video Temporal Error Detector")
+        self.title("VTED v2.2 — Strict Forensic Temporal Integrity Validator")
         self.geometry("1400x850")
+        self.configure(fg_color=D_BG)
         
         self.video_path = None
         self.output_dir = None
-        self.csv_path = None
-        self.txt_path = None
         self.analyzer = None
-        self.output_base = os.path.join(os.getcwd(), "results")
-        self.report_gen = ReportGenerator(self.output_base)
+        self.report_gen = ReportGenerator("results")
+        self.current_frame_img = None
 
         self._setup_ui()
 
     def _setup_ui(self):
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(1, weight=6) # Center Panel
+        self.grid_columnconfigure(2, weight=3) # Right Panel
+        self.grid_rowconfigure(0, weight=1)
 
-        # 1. Top Bar
-        self.top_bar = ctk.CTkFrame(self, fg_color="#f8f9fa", border_width=1, border_color="#dee2e6")
-        self.top_bar.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        self.top_bar.grid_columnconfigure(1, weight=1) # Filename takes flexible space
+        # 1. Left Panel (Actions)
+        self.left_panel = ctk.CTkFrame(self, fg_color=D_CARD, corner_radius=0, width=220)
+        self.left_panel.grid(row=0, column=0, sticky="nsew")
+        self.left_panel.grid_propagate(False)
 
-        self.upload_btn = ctk.CTkButton(self.top_bar, text="Select Video", width=160, command=self._upload_video)
-        self.upload_btn.grid(row=0, column=0, padx=10, pady=10)
-        
-        self.file_label = ctk.CTkLabel(self.top_bar, text="No video selected", anchor="w", fg_color="white", corner_radius=5)
-        self.file_label.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+        ctk.CTkLabel(self.left_panel, text="VTED", font=ctk.CTkFont(size=24, weight="bold"), text_color=D_ACCENT).pack(pady=(30, 0))
+        ctk.CTkLabel(self.left_panel, text="Forensic Engine v2.2", font=ctk.CTkFont(size=10), text_color=D_TEXT).pack(pady=(0, 40))
 
-        self.analyze_btn = ctk.CTkButton(self.top_bar, text="Run Analysis", width=160, 
-                                         command=self._start_analysis, state="disabled",
-                                         fg_color="#2ecc71", hover_color="#27ae60")
-        self.analyze_btn.grid(row=0, column=2, padx=10, pady=10)
+        self.upload_btn = self._create_nav_btn("Upload Video", self._upload_video)
+        self.analyze_btn = self._create_nav_btn("Run Analysis", self._start_analysis, state="disabled", color=D_ACCENT)
+        self.csv_btn = self._create_nav_btn("Download CSV", self._download_csv, state="disabled")
+        self.pdf_btn = self._create_nav_btn("Download PDF", self._download_pdf, state="disabled")
+        self.folder_btn = self._create_nav_btn("Results Folder", self._open_results, state="disabled")
 
-        # 2. Main content (Side-by-side)
-        self.main_container = ctk.CTkFrame(self, fg_color="#f0f0f0")
-        self.main_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
-        self.main_container.grid_columnconfigure(0, weight=6) # Table space
-        self.main_container.grid_columnconfigure(1, weight=4) # Report space
-        self.main_container.grid_rowconfigure(0, weight=1)
+        # 2. Center Panel (Video/Result Badge)
+        self.center_panel = ctk.CTkFrame(self, fg_color=D_BG, corner_radius=0)
+        self.center_panel.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
+        
+        self.video_display = ctk.CTkLabel(self.center_panel, text="NO VIDEO LOADED", fg_color=D_CARD, corner_radius=15, 
+                                          font=ctk.CTkFont(size=16), text_color=D_TEXT)
+        self.video_display.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Left: Frame Data Preview
-        self.preview_frame = ctk.CTkFrame(self.main_container, fg_color="white", border_width=1, border_color="#ccc")
-        self.preview_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        
-        self.preview_box = ctk.CTkTextbox(self.preview_frame, font=ctk.CTkFont(family="Courier", size=12), text_color="black", fg_color="white")
-        self.preview_box.pack(fill="both", expand=True, padx=2, pady=2)
-        self.preview_box.insert("0.0", "Frame analysis data will be displayed here...")
-        self.preview_box.configure(state="disabled")
+        # Anomaly Status Badge (Rule 11)
+        self.status_badge = ctk.CTkLabel(self.center_panel, text="SYSTEM READY", fg_color=D_CARD, corner_radius=20,
+                                         height=50, width=300, font=ctk.CTkFont(size=18, weight="bold"), text_color=D_TEXT)
+        self.status_badge.pack(pady=20)
 
-        # Right: Detailed Report
-        self.report_frame = ctk.CTkFrame(self.main_container, fg_color="white", border_width=1, border_color="#ccc")
-        self.report_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+        # 3. Right Panel (Stats)
+        self.right_panel = ctk.CTkFrame(self, fg_color=D_CARD, corner_radius=15)
+        self.right_panel.grid(row=0, column=2, sticky="nsew", padx=(0, 20), pady=20)
         
-        self.report_box = ctk.CTkTextbox(self.report_frame, font=ctk.CTkFont(size=13), text_color="black", fg_color="white")
-        self.report_box.pack(fill="both", expand=True, padx=5, pady=5)
-        self.report_box.insert("0.0", "Detailed Report\n\nWaiting for analysis...")
-        self.report_box.configure(state="disabled")
+        ctk.CTkLabel(self.right_panel, text="Forensic Summary", font=ctk.CTkFont(size=18, weight="bold"), text_color=D_ACCENT).pack(pady=20)
 
-        # 3. Bottom Bar (Actions)
-        self.bottom_bar = ctk.CTkFrame(self, fg_color="transparent")
-        self.bottom_bar.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        self.stats_labels = {}
+        stats_keys = ["Video Name", "Total Frames", "Duration", "Metadata FPS", "Computed FPS", "Drop Count", "Merge Count", "Integrity Score"]
         
-        self.export_csv_btn = ctk.CTkButton(self.bottom_bar, text="Export CSV", command=self._download_csv, state="disabled")
-        self.export_csv_btn.pack(side="left", padx=5)
-        
-        self.export_pdf_btn = ctk.CTkButton(self.bottom_bar, text="Export PDF Report", command=self._download_pdf, state="disabled")
-        self.export_pdf_btn.pack(side="left", padx=5)
-        
-        self.save_all_btn = ctk.CTkButton(self.bottom_bar, text="Open Results Folder", command=self._open_results, state="disabled")
-        self.save_all_btn.pack(side="left", padx=5)
+        for key in stats_keys:
+            container = ctk.CTkFrame(self.right_panel, fg_color="transparent")
+            container.pack(fill="x", padx=20, pady=5)
+            ctk.CTkLabel(container, text=key, text_color=D_TEXT, font=ctk.CTkFont(size=12)).pack(side="left")
+            val_label = ctk.CTkLabel(container, text="--", text_color="white", font=ctk.CTkFont(size=12, weight="bold"))
+            val_label.pack(side="right")
+            self.stats_labels[key] = val_label
 
-        self.zip_btn = ctk.CTkButton(self.bottom_bar, text="Export All (ZIP)", command=self._export_all_zip, state="disabled", fg_color="#f39c12", hover_color="#e67e22")
-        self.zip_btn.pack(side="left", padx=5)
-        
-        
-        
-        # Status & Progress Footer
-        self.status_bar = ctk.CTkFrame(self, height=35)
-        self.status_bar.grid(row=3, column=0, sticky="ew", padx=0, pady=0)
-        
-        self.status_label = ctk.CTkLabel(self.status_bar, text="Status: Ready", text_color="#3498db")
-        self.status_label.pack(side="left", padx=20)
-        
-        self.progress_bar = ctk.CTkProgressBar(self.status_bar, width=1100)
-        self.progress_bar.pack(side="right", padx=10, pady=10)
+        # Progress
+        self.progress_bar = ctk.CTkProgressBar(self.right_panel, width=200, fg_color="#333", progress_color=D_ACCENT)
+        self.progress_bar.pack(pady=(40, 10))
         self.progress_bar.set(0)
+        self.status_text = ctk.CTkLabel(self.right_panel, text="Idle", font=ctk.CTkFont(size=11), text_color=D_TEXT)
+        self.status_text.pack()
+
+    def _create_nav_btn(self, text, command, state="normal", color=None):
+        btn = ctk.CTkButton(self.left_panel, text=text, command=command, state=state,
+                             fg_color=color if color else "transparent", 
+                             border_width=1 if not color else 0,
+                             border_color=D_ACCENT,
+                             hover_color=D_CARD if not color else D_ACCENT,
+                             height=40, font=ctk.CTkFont(size=13))
+        btn.pack(fill="x", padx=20, pady=10)
+        return btn
 
     def _upload_video(self):
-        path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4 *.avi *.mkv *.mov")])
+        path = filedialog.askopenfilename(filetypes=[("Video", "*.mp4 *.avi *.mkv *.mov")])
         if path:
             self.video_path = path
-            filename = os.path.basename(path)
-            # Truncate if too long (e.g., > 50 chars) for display stability
-            display_name = (filename[:47] + '...') if len(filename) > 50 else filename
-            self.file_label.configure(text=display_name, text_color="black")
             self.analyze_btn.configure(state="normal")
-            self.status_label.configure(text="Status: File Loaded")
+            filename = os.path.basename(path)
+            self.stats_labels["Video Name"].configure(text=filename[:20] + ".." if len(filename) > 20 else filename)
+            self.status_text.configure(text="Video Loaded")
+            self._display_first_frame()
+
+    def _display_first_frame(self):
+        cap = cv2.VideoCapture(self.video_path)
+        ret, frame = cap.read()
+        if ret:
+            self._update_preview(frame)
+        cap.release()
+
+    def _update_preview(self, frame, is_anomaly=False):
+        # Resize to fit display
+        h, w = frame.shape[:2]
+        display_w = 800
+        display_h = int(h * (display_w / w))
+        
+        # Overlay Red if anomaly (Rule 11)
+        if is_anomaly:
+            red_tint = np.zeros_like(frame)
+            red_tint[:, :] = (0, 0, 150) # Red in BGR
+            frame = cv2.addWeighted(frame, 0.7, red_tint, 0.3, 0)
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+        img = img.resize((display_w, display_h), Image.Resampling.LANCZOS)
+        
+        self.current_frame_img = ImageTk.PhotoImage(img)
+        self.video_display.configure(image=self.current_frame_img, text="")
 
     def _start_analysis(self):
-        if not self.video_path:
-            return
-        
         self.analyze_btn.configure(state="disabled")
         self.upload_btn.configure(state="disabled")
-        self.status_label.configure(text="Status: Analyzing...")
+        self.status_text.configure(text="Processing...")
         
         threading.Thread(target=self._run_analysis_thread, daemon=True).start()
 
@@ -126,107 +145,71 @@ class VideoAnalyzerApp(ctk.CTk):
         try:
             self.analyzer = VideoAnalyzer(self.video_path)
             
-            def update_progress(current, total):
+            def cb(current, total):
                 self.progress_bar.set(current / total)
             
-            self.analyzer.collect_metrics(progress_callback=update_progress)
-            results_df, summary = self.analyzer.classify_frames()
+            self.analyzer.collect_metrics(progress_callback=cb)
+            results, summary = self.analyzer.classify_frames()
             
-            self.output_dir, self.csv_path, self.txt_path, summary_text = self.report_gen.generate_reports(
-                results_df, summary, self.video_path,
-                custom_name=None,
-                analyzer_metadata=self.analyzer.processing_metadata
-            )
+            self.output_dir, self.csv_path, self.pdf_path = self.report_gen.generate_reports(results, summary, self.video_path)
             
-            self.after(0, lambda: self._update_ui_results(summary, summary_text, results_df))
+            self.after(0, lambda: self._update_ui_results(summary, results))
             
         except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Error", f"Analysis failed: {str(e)}"))
-            self.after(0, lambda: self._reset_ui())
+            self.after(0, lambda: messagebox.showerror("Analysis Error", str(e)))
+            self.after(0, self._reset_ui)
 
-    def _update_ui_results(self, summary, summary_text, results_df):
-        self.preview_box.configure(state="normal")
-        self.preview_box.delete("0.0", "end")
-        
-        # Filter for GUI Display as requested: Frame | Timestamp | Time Diff | Motion | SSIM | Status
-        display_df = results_df[['frame', 'timestamp', 'time_diff', 'motion_score', 'ssim', 'status']].copy()
-        display_df.columns = ['Frame', 'Timestamp', 'Time Diff', 'Motion', 'SSIM', 'Status']
-        
-        # Format for readability
-        display_df['Timestamp'] = display_df['Timestamp'].map('{:,.3f}'.format)
-        display_df['Time Diff'] = display_df['Time Diff'].map('{:,.4f}'.format)
-        display_df['Motion'] = display_df['Motion'].map('{:,.3f}'.format)
-        display_df['SSIM'] = display_df['SSIM'].map('{:,.4f}'.format)
-        
-        preview_text = display_df.to_string(index=False, max_rows=2000, justify='left')
-        self.preview_box.insert("0.0", preview_text)
-        self.preview_box.configure(state="disabled")
+    def _update_ui_results(self, summary, results):
+        self.stats_labels["Total Frames"].configure(text=str(summary['total_frames']))
+        self.stats_labels["Duration"].configure(text=f"{summary['duration']:.2f}s")
+        self.stats_labels["Metadata FPS"].configure(text=f"{summary['metadata_fps']:.2f}")
+        self.stats_labels["Computed FPS"].configure(text=f"{summary['computed_fps']:.2f}")
+        self.stats_labels["Drop Count"].configure(text=str(summary['drop_count']), text_color=D_RED if summary['drop_count'] > 0 else "white")
+        self.stats_labels["Merge Count"].configure(text=str(summary['merge_count']), text_color=D_GREEN if summary['merge_count'] > 0 else "white")
+        self.stats_labels["Integrity Score"].configure(text=f"{summary['integrity_score']:.2f}%")
 
-        self.report_box.configure(state="normal")
-        self.report_box.delete("0.0", "end")
-        self.report_box.insert("0.0", "Detailed Report\n" + "="*30 + "\n" + summary_text)
-        self.report_box.configure(state="disabled")
+        # Update Badge
+        if summary['drop_count'] > 0 or summary['merge_count'] > 0:
+            self.status_badge.configure(text="! ANOMALIES DETECTED !", fg_color=D_RED, text_color="white")
+            # Show the first anomaly in preview
+            first_fail = results[results['status'] != 'NORMAL'].iloc[0]
+            self._show_anomaly_frame(int(first_fail['frame']))
+        else:
+            self.status_badge.configure(text="PASSED: VALID INTEGRITY", fg_color=D_GREEN, text_color="black")
+            self._display_first_frame()
 
-        self.status_label.configure(text="Status: Complete", text_color="#2ecc71")
-        
-        # Enable all buttons
-        btns = [self.export_csv_btn, self.export_pdf_btn, self.save_all_btn, self.zip_btn]
-        for btn in btns:
-            btn.configure(state="normal")
-        
-        self.analyze_btn.configure(state="normal")
+        self.status_text.configure(text="Validation Complete")
+        self.csv_btn.configure(state="normal")
+        self.pdf_btn.configure(state="normal")
+        self.folder_btn.configure(state="normal")
         self.upload_btn.configure(state="normal")
+        self.analyze_btn.configure(state="normal")
 
-    def _copy_summary(self):
-        self.clipboard_clear()
-        self.clipboard_append(self.report_box.get("0.0", "end"))
-        messagebox.showinfo("Clipboard", "Summary report copied to clipboard!")
+    def _show_anomaly_frame(self, frame_idx):
+        cap = cv2.VideoCapture(self.video_path)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx - 1)
+        ret, frame = cap.read()
+        if ret:
+            self._update_preview(frame, is_anomaly=True)
+        cap.release()
 
     def _download_csv(self):
-        if self.csv_path and os.path.exists(self.csv_path):
-            save_path = filedialog.asksaveasfilename(
-                defaultextension=".csv",
-                initialfile="frame_classification.csv",
-                filetypes=[("CSV files", "*.csv")]
-            )
-            if save_path:
-                shutil.copy(self.csv_path, save_path)
-                messagebox.showinfo("Success", f"CSV saved to: {save_path}")
+        if self.csv_path:
+            save = filedialog.asksaveasfilename(defaultextension=".csv", initialfile="frame_audit.csv")
+            if save: shutil.copy(self.csv_path, save)
 
     def _download_pdf(self):
-        pdf_path = os.path.join(self.output_dir, "analysis_report.pdf")
-        if os.path.exists(pdf_path):
-            save_path = filedialog.asksaveasfilename(
-                defaultextension=".pdf",
-                initialfile="analysis_report.pdf",
-                filetypes=[("PDF files", "*.pdf")]
-            )
-            if save_path:
-                shutil.copy(pdf_path, save_path)
-                messagebox.showinfo("Success", f"PDF saved to: {save_path}")
-
-    def _export_all_zip(self):
-        if self.output_dir and os.path.exists(self.output_dir):
-            save_path = filedialog.asksaveasfilename(
-                defaultextension=".zip",
-                initialfile=f"{os.path.basename(self.output_dir)}.zip",
-                filetypes=[("ZIP files", "*.zip")]
-            )
-            if save_path:
-                # Remove extension if user added it, as make_archive adds its own
-                if save_path.lower().endswith('.zip'):
-                    save_path = save_path[:-4]
-                shutil.make_archive(save_path, 'zip', self.output_dir)
-                messagebox.showinfo("Success", f"All results zipped to: {save_path}.zip")
+        if self.pdf_path:
+            save = filedialog.asksaveasfilename(defaultextension=".pdf", initialfile="Integrity_Report.pdf")
+            if save: shutil.copy(self.pdf_path, save)
 
     def _open_results(self):
-        if self.output_dir and os.path.exists(self.output_dir):
-            os.startfile(self.output_dir)
+        if self.output_dir: os.startfile(self.output_dir)
 
     def _reset_ui(self):
         self.analyze_btn.configure(state="normal")
         self.upload_btn.configure(state="normal")
-        self.status_label.configure(text="Status: Ready", text_color="#3498db")
+        self.status_text.configure(text="Ready")
         self.progress_bar.set(0)
 
 if __name__ == "__main__":

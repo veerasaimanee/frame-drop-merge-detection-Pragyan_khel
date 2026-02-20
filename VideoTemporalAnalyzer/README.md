@@ -1,56 +1,72 @@
-# Video Temporal Error Detector v2.1 – Forensic Frame Analysis System
+# VTED v2.2 — Strict Forensic Temporal Integrity Validator
 
-## Project Overview
-This application is a professional forensic tool designed to detect temporal inconsistencies in video streams. Version 2.1 introduces **Statistically Grounded Logic**, **Deterministic Classification**, and **Refined Anomaly Thresholding** for Frame Drops and Merges.
+## 🔬 Project Overview
+VTED (Video Temporal Error Detector) is a professional-grade forensic tool designed to validate the temporal and structural integrity of broadcast video streams. Specifically optimized for high-motion sports footage (e.g., cricket broadcast), VTED v2.2 employs a **deterministic, rule-based engine** to detect Frame Drops and Frame Merges with mathematical precision.
 
-## Key Features (v2.1)
-- **Defensible FPS Model:** Computes true FPS based on inter-frame intervals, flagging metadata inconsistencies > 5%.
-- **Clean vs Audit Metrics:**
-  - `frame_classification.csv`: Clean report for non-technical review.
-  - `frame_audit_metrics.csv`: Detailed forensic trace containing Z-scores and component scores.
-- **Evidence Image Generation:** Automatically overlays metadata on frames flagged as FRAME_DROP or FRAME_MERGE.
-- **Side-by-Side Merge Validation:** Generates comparison images (Prev | Merge | Next) for ghosting analysis.
-- **Professional PDF Reports:** Generates structured reports with embedded evidence samples using `fpdf2`.
-- **Synthetic Test Tools:** Built-in generators to create controlled Frame Drop and Frame Merge scenarios for system validation.
-- **Custom Naming & Isolation:** Every analysis creates a unique, timestamped session folder.
+## 🚀 Key Features (v2.2)
+- **Strict Forensic Logic:** No heuristic guesswork. Labels are assigned based on immutable timing and signal processing rules.
+- **Robust Statistical Engine:** Implements **Median Absolute Deviation (MAD)** based Z-scores with a 21-frame rolling window to handle dynamic broadcast backgrounds.
+- **Deep Structural Analysis:** Detects "ghosting" or blended frames (FRAME_MERGE) by correlating SSIM drops with Laplacian edge-blur verification.
+- **Timestamp Audit:** Compares Metadata FPS against physical stream duration to compute a Validation FPS, flagging discrepancies.
+- **Visual Evidence Engine:** Automatically generates forensic snapshots of flagged frames with data overlays (Frame index, Status, Confidence).
+- **Professional Dark Dashboard:** A high-contrast, information-dense interface built for forensic specialists.
+- **Automated Reporting:** Generates comprehensive PDF Integrity Reports and full Forensic CSV audit trails.
 
-## Detection Logic (Deterministic v2.1)
-- **FRAME_DROP:** Triggered only if `Time Delta > 1.5x Median Interval` **AND** `Motion Z-Score > 2.0`.
-- **FRAME_MERGE:** Triggered only if `Timing is Stable` (within 20% tolerance) **AND** `SSIM Z-Score < -2.0` **AND** `Laplacian Z-Score < -1.5` **AND** `Motion Z-Score < 3.0`.
+## ⚖️ Detection Methodology
+### 1. FRAME_DROP (Rule 2.1)
+Triggered when the inter-frame time difference is **>= 1.5x** the expected interval (based on metadata FPS). This provides a deterministic verdict on missing temporal packets.
 
-## System Architecture
+### 2. FRAME_MERGE (Rule 4.1)
+Triggered when timing is stable but multiple structural signals converge:
+- **SSIM Z-score < -2.5** (Structural Deviation)
+- **Laplacian Z-score < -2.5** (Loss of edge sharpness/blur)
+
+### 3. Structural Drop Fallback (Rule 6.1)
+Detects drops even when timestamps are spoofed or constant:
+- **Motion Z-score > 3.5** AND **SSIM Z-score < -3.0**
+
+## 📂 Project Structure
 ```text
 VideoTemporalAnalyzer/
 ├── main.py                 # Application Entry Point
-├── analyzer/               # Core Logic
-│     └── video_analyzer.py # Pass 1 & Pass 2 + Synthetic Tools
-├── reports/                # Output Generation
-│     └── report_generator.py # CSV/PDF/Evidence Generation
+├── analyzer/               # Strict Forensic Engine
+│     └── video_analyzer.py # Timing & Statistical Math (Z-Scores, MAD)
 ├── gui/                    # Presentation Layer
-│     └── app.py            # CustomTkinter GUI Implementation
-├── results/                # Session-Isolated Output Storage
-├── requirements.txt        # Updated Dependencies (fpdf2, Pillow)
+│     └── app.py            # Professional Dark-Mode Dashboard
+├── reports/                # Forensic Output Logic
+│     └── report_generator.py # PDF/CSV Evidence Generation
+├── results/                # Session-Isolated Output Storage (Git Ignored)
+├── requirements.txt        # System Dependencies
 └── README.md               # Documentation
 ```
 
-## How to Run
-1.  **Environment Setup:**
+## 🛠️ Installation & Usage
+1.  **Clone & Setup:**
     ```bash
     pip install -r requirements.txt
     ```
-2.  **Launch Application:**
+2.  **Launch:**
     ```bash
     python main.py
     ```
-3.  **Process Video:**
-    - **Step 1:** Select a video file.
-    - **Custom Title:** Enter a custom name for the analysis session.
-    - **Step 2:** Click **Run Analysis**.
-    - **Export:** Use the bottom bar to export PDF, CSV, or a full ZIP archive of the forensic folder.
+3.  **Validate:**
+    - Select your video file.
+    - Click **Run Analysis**.
+    - Review results in the **Right Panel**.
+    - Export the **Forensic Integrity Report (PDF)** for professional documentation.
 
-## Synthetic Testing
-Use the **"Gen Synthetic DROP/MERGE"** buttons in the bottom right to create test videos. The system should correctly identify these simulated errors with high confidence.
+## 📝 Dependencies
+- Python 3.13
+- OpenCV (cv2)
+- NumPy
+- Pandas
+- Scikit-Image
+- CustomTkinter
+- fpdf2
+- Pillow
 
 ---
-**Author:** Antigravity (Advanced Agentic Coding AI)
-**Tech Stack:** Python 3.13, OpenCV, NumPy, Scikit-Image, Pandas, CustomTkinter, fpdf2.
+**Disclaimer:** This tool is designed for forensic validation. Analysis parameters are tuned for broadcast-grade footage. Low-quality or highly compressed web video may require manual threshold adjustment in `video_analyzer.py`.
+
+**Author:** Antigravity (Advanced Agentic AI)
+**Version:** 2.2 Strict Forensic
