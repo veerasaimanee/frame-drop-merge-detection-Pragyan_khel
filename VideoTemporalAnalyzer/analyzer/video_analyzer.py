@@ -140,15 +140,31 @@ class VideoAnalyzer:
     def classify_frames(self):
         df = pd.DataFrame(self.metrics)
         
-        # 1. Global Stats (Excluding frame 1)
-        stats_df = df.iloc[1:]
+        # SECTION 7: EDGE CASE HANDLING - Frames < 10
+        if len(df) < 10:
+            print("Warning: Insufficient data for reliable anomaly detection. (Frames < 10)")
+            df['status'] = "NORMAL"
+            # Ensure required columns for reporting exist
+            required_cols = ['motion_z', 'ssim_z', 'lap_z', 'anomaly_score', 'confidence', 'reason']
+            for col in required_cols:
+                df[col] = 0.0
+            self.results = df
+            return self.results, {"warning": "Insufficient data"}
+
+        # 1. Temporal Model Correction (SECTION 1)
+        # Exclude frame 1 for stats
+        stats_df = df.iloc[1:].copy()
         
+        time_vals = stats_df["time_diff"].values
+        expected_interval = np.median(time_vals)
+        self.expected_interval = expected_interval # Update class var
+        temporal_tolerance = expected_interval * 0.2
+        
+        # 2. Metric Stats (Robust Z-Scores)
         motion_vals = stats_df["motion_score"].values
         ssim_vals = stats_df["ssim"].values
         lap_vals = stats_df["laplacian_var"].values
-        time_vals = stats_df["time_diff"].values
 
-        # Global Medians and MADs for Robust Z-Scores
         m_med = np.median(motion_vals)
         m_mad = np.median(np.abs(motion_vals - m_med))
         
@@ -158,91 +174,86 @@ class VideoAnalyzer:
         l_med = np.median(lap_vals)
         l_mad = np.median(np.abs(lap_vals - l_med))
 
-        # 2% Percentile for adaptive SSIM thresholding
-        ssim_threshold_global = np.percentile(ssim_vals, 2)
+        # SECTION 7: EDGE CASE HANDLING - Duration < 0.3s
+        video_duration = df['timestamp'].iloc[-1]
+        merge_detection_enabled = video_duration >= 0.3
 
-        # 2. Local Rolling Window Stats
-        df['local_motion_mean'] = df['motion_score'].rolling(window=self.window_size, center=True).mean().fillna(m_med)
-        df['local_ssim_mean'] = df['ssim'].rolling(window=self.window_size, center=True).mean().fillna(s_med)
+        # Prepare rolling stats for visualization plots (not used for classification)
+        df['local_motion_mean'] = df['motion_score'].rolling(window=15, center=True).mean().fillna(m_med)
+        df['local_ssim_mean'] = df['ssim'].rolling(window=15, center=True).mean().fillna(s_med)
 
         results = []
         
         for idx, row in df.iterrows():
             if row['frame'] == 1:
-                results.append({**row.to_dict(), "status": "NORMAL", "anomaly_score": 0.0, "confidence": 0.0, "reason": "Baseline Frame", "motion_z": 0.0, "ssim_z": 0.0, "lap_z": 0.0})
+                results.append({
+                    **row.to_dict(), 
+                    "status": "NORMAL", 
+                    "anomaly_score": 0.0, 
+                    "confidence": 0.0, 
+                    "reason": "Baseline", 
+                    "motion_z": 0.0, 
+                    "ssim_z": 0.0, 
+                    "lap_z": 0.0
+                })
                 continue
 
-            # Robust Z-Scores (Global)
+            # Robust Z-Scores
             m_z = self._robust_z_score(row['motion_score'], m_med, m_mad)
-            s_z = self._robust_z_score(row['ssim'], s_med, s_mad) # Note: Low SSIM is bad, so s_z will be negative for anomalies
+            s_z = self._robust_z_score(row['ssim'], s_med, s_mad)
             l_z = self._robust_z_score(row['laplacian_var'], l_med, l_mad)
-            t_z = (row['time_diff'] - self.expected_interval) / (self.expected_interval * 0.1 + 1e-6)
-
-            # Contribution Components (Normalized 0-1)
-            # Motion: higher is more anomalous
-            motion_contrib = min(1.0, max(0, m_z) / 5.0)
             
-            # SSIM: lower is more anomalous (Normalized deviation from median)
-            ssim_contrib = min(1.0, max(0, (s_med - row['ssim']) / (s_mad * 3 + 1e-6)))
+            # Simple scoring for reporting (not used for label)
+            # Normalize deviations for score visualization
+            m_score = min(1.0, max(0, m_z) / 5.0)
+            s_score = min(1.0, max(0, -s_z) / 5.0)
+            t_score = min(1.0, abs(row['time_diff'] - expected_interval) / (expected_interval * 1.5))
+            anomaly_score = (t_score * 0.5) + (s_score * 0.3) + (m_score * 0.2)
             
-            # Texture: deviation from median
-            tex_contrib = min(1.0, abs(l_z) / 4.0)
-            
-            # Timing: deviation from expected
-            time_contrib = min(1.0, abs(t_z) / 5.0)
-
-            # Weighted Anomaly Score
-            # Heavy weight on timing for Drops, Heavy weight on SSIM for Merges
-            anomaly_score = (time_contrib * 0.45) + (ssim_contrib * 0.35) + (motion_contrib * 0.15) + (tex_contrib * 0.05)
-            
-            # SECTION 3: IMPROVED LOGIC SAFETY
+            # SECTION 4 & 5: MUTUAL EXCLUSIVITY & DETERMINISTIC CLASSIFICATION
             status = "NORMAL"
             reason = "Consistent"
-            
-            # DROP HEURISTIC: Tightened
-            # time_diff > expected * 1.5 AND high motion_z AND ssim deviates
-            if row['time_diff'] > self.expected_interval * 1.5 and m_z > 2.0 and s_z < -1.5:
-                status = "DROP"
-                reason = f"Timing+Motion+SSIM"
-            
-            # MERGE HEURISTIC: Tightened
-            # Normal timing AND low SSIM AND low Laplacian AND motion not extreme
-            elif status == "NORMAL" and row['ssim'] < ssim_threshold_global:
-                if abs(t_z) < 2.0 and l_z < -1.5 and m_z < 3.0:
-                    status = "MERGE"
-                    reason = f"SSIM+Texture"
 
-            # Confidence Calibration
-            calibrated_confidence = self._sigmoid((anomaly_score - 0.5) * 10)
-            if status == "NORMAL" and anomaly_score < 0.4:
-                calibrated_confidence = 0.0 
+            # SECTION 2: FRAME DROP CORRECTION
+            # time_diff > expected * 1.5 AND motion_z > 2.0
+            if row['time_diff'] > expected_interval * 1.5 and m_z > 2.0:
+                status = "FRAME_DROP"
+                reason = "Temporal Anomaly (High Time Diff + Motion)"
+            
+            # SECTION 3: FRAME MERGE CORRECTION
+            # ONLY if Drop condition not met
+            elif merge_detection_enabled:
+                # abs(time_diff - expected) <= tolerance AND ssim_z < -2.0 AND laplacian_z < -1.5 AND motion_z < 3.0
+                if (abs(row['time_diff'] - expected_interval) <= temporal_tolerance and 
+                    s_z < -2.0 and 
+                    l_z < -1.5 and 
+                    m_z < 3.0):
+                    status = "FRAME_MERGE"
+                    reason = "Structural Anomaly (Blur + Low SSIM)"
 
             results.append({
                 **row.to_dict(),
                 "status": status,
-                "anomaly_score": round(float(anomaly_score), 4),
-                "confidence": round(float(calibrated_confidence), 3),
                 "reason": reason,
                 "motion_z": round(float(m_z), 2),
                 "ssim_z": round(float(s_z), 2),
                 "lap_z": round(float(l_z), 2),
-                "motion_contrib": round(float(motion_contrib), 2),
-                "ssim_contrib": round(float(ssim_contrib), 2),
-                "tex_contrib": round(float(tex_contrib), 2),
-                "time_contrib": round(float(time_contrib), 2)
+                "anomaly_score": round(float(anomaly_score), 4),
+                "confidence": 1.0 if status != "NORMAL" else 0.0 # Simple deterministic confidence
             })
 
         self.results = pd.DataFrame(results)
         
         # Summary Calculation
         total = len(self.results)
-        drops = len(self.results[self.results['status'] == "DROP"])
-        merges = len(self.results[self.results['status'] == "MERGE"])
+        drops = len(self.results[self.results['status'] == "FRAME_DROP"])
+        merges = len(self.results[self.results['status'] == "FRAME_MERGE"])
         
         self.summary = {
             'video_name': os.path.basename(self.video_path),
             'total_frames': total,
             'fps': self.fps,
+            'expected_interval': expected_interval,
             'drop_count': drops,
             'merge_count': merges,
             'drop_percent': (drops / total) * 100 if total > 0 else 0,
@@ -252,11 +263,11 @@ class VideoAnalyzer:
             'std_motion': motion_vals.std(),
             'mean_ssim': ssim_vals.mean(),
             'std_ssim': ssim_vals.std(),
-            'ssim_threshold': ssim_threshold_global,
             'm_med': m_med,
             'm_mad': m_mad,
             's_med': s_med,
             's_mad': s_mad,
+            'merge_detection_enabled': merge_detection_enabled,
             'fps_stats': self.fps_stats
         }
         

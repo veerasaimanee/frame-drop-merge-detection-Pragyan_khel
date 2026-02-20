@@ -28,9 +28,18 @@ class ReportGenerator:
             
         # 1. Separate CSVs
         # Clean CSV
-        clean_cols = ['frame', 'timestamp', 'time_diff', 'motion_score', 'ssim', 'laplacian_var', 'status']
+        clean_rename = {
+            'frame': 'frame_index',
+            'timestamp': 'timestamp_seconds',
+            'time_diff': 'time_diff_seconds',
+            'motion_score': 'motion_value',
+            'ssim': 'ssim_value',
+            'laplacian_var': 'laplacian_value',
+            'status': 'status'
+        }
+        clean_cols = list(clean_rename.keys())
         clean_csv_path = os.path.join(output_dir, "frame_classification.csv")
-        results_df[clean_cols].to_csv(clean_csv_path, index=False)
+        results_df[clean_cols].rename(columns=clean_rename).to_csv(clean_csv_path, index=False)
         
         # Audit CSV
         audit_exclude = ['local_motion_mean', 'local_ssim_mean']
@@ -142,9 +151,9 @@ class ReportGenerator:
             f"Drop Count: {summary['drop_count']}\n"
             f"Merge Count: {summary['merge_count']}\n"
             f"Temporal Integrity Score: {summary['integrity_score']:.2f}%\n\n"
-            "DETECTION REASONING (Explainable v2.0):\n"
-            "- DROPS: Triggered by timing anomalies > 1.5x interval and significant motion momentum.\n"
-            "- MERGE: Triggered by SSIM drops below 2nd percentile combined with Laplacian texture shifts.\n\n"
+            "DETECTION REASONING (Explainable v2.1):\n"
+            "- FRAME_DROPS: Triggered by timing anomalies (> 1.5x median interval) and significant motion (> 2.0 Sigma).\n"
+            "- FRAME_MERGE: Triggered by structural blur (SSIM/Laplacian shift) with stable timing.\n\n"
             "FORENSIC TRACEABILITY:\n"
             "- Detailed `frame_classification.csv` saved in results.\n"
             "- `analysis_log.txt` contains statistical parameters for audit.\n"
@@ -159,7 +168,7 @@ class ReportGenerator:
             f.write(summary_text)
         return summary_text
     def _generate_evidence_images(self, df, video_path, output_dir):
-        flagged = df[df['status'].isin(['DROP', 'MERGE'])]
+        flagged = df[df['status'].isin(['FRAME_DROP', 'FRAME_MERGE'])]
         if flagged.empty:
             return []
             
@@ -187,7 +196,7 @@ class ReportGenerator:
                 f"Video: {os.path.basename(video_path)}",
                 f"Frame: {frame_idx}",
                 f"Timestamp: {row['timestamp']:.3f}s",
-                f"Status: FRAME_{row['status']}"
+                f"Status: {row['status']}"
             ]
             
             for i, line in enumerate(text_lines):
@@ -209,12 +218,12 @@ class ReportGenerator:
                     next_s = cv2.resize(next_frame, (w_small, h_small))
                     combined = np.hstack([prev_s, curr_s, next_s])
                     
-                    img_name = f"frame_{frame_idx:04d}_FRAME_MERGE_COMPARISON.png"
+                    img_name = f"frame_{frame_idx:04d}_{row['status']}_COMPARISON.png"
                     img_path = os.path.join(output_dir, img_name)
                     cv2.imwrite(img_path, combined)
                     image_paths.append(img_path)
             
-            img_name = f"frame_{frame_idx:04d}_FRAME_{row['status']}.png"
+            img_name = f"frame_{frame_idx:04d}_{row['status']}.png"
             img_path = os.path.join(output_dir, img_name)
             cv2.imwrite(img_path, frame)
             image_paths.append(img_path)
