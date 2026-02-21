@@ -1,6 +1,19 @@
+# VTED v2.5 Exclusions
 __pycache__/
-*.pyc
-.venv/
+*.py[cod]
+*$py.class
 results/
-temp/
+.venv/
+env/
+venv/
+.env
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.zip
 *.log
+*.txt
+*.csv
+*.pdf
+.DS_Store

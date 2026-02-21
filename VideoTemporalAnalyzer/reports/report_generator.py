@@ -7,23 +7,24 @@ from fpdf import FPDF
 
 class ReportGenerator:
     def __init__(self, output_base_dir="results"):
-        self.output_base_dir = output_base_dir
+        self.output_base_dir = os.path.abspath(output_base_dir)
         if not os.path.exists(self.output_base_dir):
             os.makedirs(self.output_base_dir)
 
-    def generate_reports(self, results_df, summary, video_path):
+    def generate_reports(self, results_df, summary, video_path, custom_name=None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         video_name = os.path.basename(video_path)
         base_name = os.path.splitext(video_name)[0]
-        folder_name = f"VTED_RESULT_{base_name}_{timestamp}"
+        
+        display_name = custom_name if custom_name and custom_name.strip() else base_name
+        folder_name = f"VTED_RESULT_{display_name}_{timestamp}"
         output_dir = os.path.join(self.output_base_dir, folder_name)
         
         if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+            os.makedirs(output_dir, exist_ok=True)
             
         # 1. Forensic CSV (Full Metrics - Rule 10.2)
         csv_path = os.path.join(output_dir, "frame_classification.csv")
-        # Format the CSV with exactly the right columns
         results_df.to_csv(csv_path, index=False)
         
         # 2. Anomaly Images (Rule 9.1)
@@ -36,7 +37,7 @@ class ReportGenerator:
         # 4. PDF Report (Rule 13.1)
         pdf_path = self._generate_pdf(summary, results_df, output_dir, flagged_images)
             
-        return output_dir, csv_path, pdf_path
+        return os.path.abspath(output_dir), os.path.abspath(csv_path), os.path.abspath(pdf_path)
 
     def _generate_anomaly_snapshots(self, df, video_path, output_dir):
         """Saves snapshots for every FRAME_DROP or FRAME_MERGE."""
@@ -45,7 +46,7 @@ class ReportGenerator:
             return []
             
         if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+            os.makedirs(output_dir, exist_ok=True)
             
         image_paths = []
         cap = cv2.VideoCapture(video_path)
@@ -64,7 +65,7 @@ class ReportGenerator:
             cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
             
             # Status Color Branding
-            status_color = (46, 46, 255) if row['status'] == 'FRAME_DROP' else (159, 255, 0) # Red for drop, Green-ish for merge
+            status_color = (46, 46, 255) if row['status'] == 'FRAME_DROP' else (159, 255, 0)
             
             text_lines = [
                 f"STRICT VALIDATION: {row['status']}",
@@ -81,16 +82,13 @@ class ReportGenerator:
             img_name = f"frame_{frame_idx:04d}_{row['status']}.png"
             img_path = os.path.join(output_dir, img_name)
             cv2.imwrite(img_path, frame)
-            image_paths.append(img_path)
+            image_paths.append(os.path.abspath(img_path))
             
         cap.release()
         return image_paths
 
     def _generate_analysis_log(self, df, summary, output_dir):
         """Strict Rule Verification Log."""
-        drops = df[df['status'] == 'FRAME_DROP']
-        merges = df[df['status'] == 'FRAME_MERGE']
-        
         log_content = [
             "=== VTED v2.2 STRICT FORENSIC LOG ===",
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
@@ -111,15 +109,14 @@ class ReportGenerator:
             "DETECTION REASONING LOG:"
         ]
         
-        # Log top 10 anomalies
-        anomalies = df[df['status'] != 'NORMAL'].head(20)
+        anomalies = df[df['status'] != 'NORMAL'].head(30)
         for _, row in anomalies.iterrows():
             log_content.append(f"• Frame {int(row['frame']):04d}: {row['status']} | Rule: {row['rule_info']} | Conf: {row['confidence']*100:.1f}%")
             
         log_path = os.path.join(output_dir, "analysis_log.txt")
         with open(log_path, "w") as f:
             f.write("\n".join(log_content))
-        return log_path
+        return os.path.abspath(log_path)
 
     def _generate_pdf(self, summary, results_df, output_dir, flagged_images):
         pdf = FPDF()
@@ -182,9 +179,10 @@ class ReportGenerator:
             pdf.set_font("Helvetica", "B", 14)
             pdf.cell(0, 10, "4. Forensic Evidence Snapshots", ln=True)
             for img in flagged_images[:5]: # Show top 5 in PDF
-                pdf.image(img, w=170)
-                pdf.ln(5)
+                if os.path.exists(img):
+                    pdf.image(img, w=170)
+                    pdf.ln(5)
         
         pdf_path = os.path.join(output_dir, "Forensic_Integrity_Report.pdf")
         pdf.output(pdf_path)
-        return pdf_path
+        return os.path.abspath(pdf_path)
