@@ -16,10 +16,10 @@ VTED (Video Temporal Error Detector) is a professional-grade forensic tool desig
 ### 1. FRAME_DROP (Rule 2.1)
 Triggered when the inter-frame time difference is **>= 1.5x** the expected interval (based on metadata FPS). This provides a deterministic verdict on missing temporal packets.
 
-### 2. FRAME_MERGE (Rule 4.1)
-Triggered when timing is stable but multiple structural signals converge:
-- **SSIM Z-score < -2.5** (Structural Deviation)
-- **Laplacian Z-score < -2.5** (Loss of edge sharpness/blur)
+### 2. FRAME_MERGE (Balanced Rule)
+Triggered when timing is stable (±10% deviation) and structural signals converge via a two-layer threshold system:
+- **Layer 1 (Strong):** SSIM Z-score < -2.3 AND Laplacian Z-score < -2.3.
+- **Layer 2 (Moderate):** SSIM Z-score < -2.0 AND Laplacian Z-score < -1.8 AND local texture confirmation (Laplacian < 80% of local mean).
 
 ### 3. Structural Drop Fallback (Rule 6.1)
 Detects drops even when timestamps are spoofed or constant:
