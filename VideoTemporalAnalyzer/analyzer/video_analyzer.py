@@ -82,6 +82,7 @@ class VideoAnalyzer:
         
         for col in ['ssim', 'laplacian', 'motion']:
             df[f'{col}_median'] = df[col].rolling(window=window, center=True).median().bfill().ffill()
+            df[f'{col}_mean'] = df[col].rolling(window=window, center=True).mean().bfill().ffill()
             df[f'{col}_mad'] = df[col].rolling(window=window, center=True).apply(
                 lambda x: np.median(np.abs(x - np.median(x)))
             ).bfill().ffill()
@@ -102,13 +103,22 @@ class VideoAnalyzer:
                 rule_triggered = "Temporal Anomaly (Rule 2.1)"
                 confidence = self._sigmoid(0.7 * abs(row['temporal_deviation'] - 1.0) + 0.3 * abs(row['ssim_z']))
             
-            # 2. Strict Frame Merge (Rule 4.1)
-            elif (abs(row['temporal_deviation'] - 1.0) <= 0.1 and 
-                  row['ssim_z'] < -2.5 and 
-                  row['laplacian_z'] < -2.5):
-                status = "FRAME_MERGE"
-                rule_triggered = "Structural Merge (Rule 4.1)"
-                confidence = self._sigmoid(0.5 * abs(row['ssim_z']) + 0.5 * abs(row['laplacian_z']))
+            # 2. Balanced Strict Frame Merge (Two-Layer Logic)
+            elif (abs(row['temporal_deviation'] - 1.0) <= 0.1):
+                # Layer 1: Strong Merge
+                is_strong = (row['ssim_z'] < -2.3 and row['laplacian_z'] < -2.3)
+                
+                # Layer 2: Moderate Merge + Structural Confirmation
+                is_moderate = (
+                    row['ssim_z'] < -2.0 and 
+                    row['laplacian_z'] < -1.8 and 
+                    row['laplacian'] < row['laplacian_mean'] * 0.80
+                )
+                
+                if is_strong or is_moderate:
+                    status = "FRAME_MERGE"
+                    rule_triggered = "Structural Merge (Balanced Layer)"
+                    confidence = self._sigmoid(0.5 * abs(row['ssim_z']) + 0.5 * abs(row['laplacian_z']))
             
             # 3. Structural Drop Fallback (Rule 6.1)
             elif (row['motion_z'] > 3.5 and row['ssim_z'] < -3.0):
@@ -158,7 +168,7 @@ class VideoAnalyzer:
             "--------------------------------------------------\n"
             "DETECTION PRINCIPLES:\n"
             "• FRAME_DROP: Triggered when temporal deviation >= 1.5x.\n"
-            "• FRAME_MERGE: Triggered by convergent SSIM/Laplacian Z-scores (< -2.5).\n"
+            "• FRAME_MERGE: Triggered by convergent SSIM/Laplacian Z-scores (Two-Layer Logic).\n"
             "• STRUCTURAL: Fallback for motion/sharpness discontinuity.\n\n"
             "METHODOLOGY:\n"
             "This session used a 21-frame rolling Median Absolute Deviation (MAD) window. "
