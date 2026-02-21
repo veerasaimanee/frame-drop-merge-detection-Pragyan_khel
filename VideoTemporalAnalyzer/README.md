@@ -68,5 +68,4 @@ VideoTemporalAnalyzer/
 ---
 **Disclaimer:** This tool is designed for forensic validation. Analysis parameters are tuned for broadcast-grade footage. Low-quality or highly compressed web video may require manual threshold adjustment in `video_analyzer.py`.
 
-**Author:** Antigravity (Advanced Agentic AI)
 **Version:** 2.2 Strict Forensic

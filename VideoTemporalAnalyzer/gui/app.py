@@ -4,6 +4,7 @@ import os
 import threading
 import shutil
 import cv2
+import numpy as np
 from PIL import Image, ImageTk
 from analyzer.video_analyzer import VideoAnalyzer
 from reports.report_generator import ReportGenerator
@@ -20,7 +21,7 @@ class VideoAnalyzerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("VTED v2.2 — Strict Forensic Temporal Integrity Validator")
+        self.title("VTED v3.0 — Strict Forensic Temporal Integrity Validator")
         self.geometry("1450x920")
         self.configure(fg_color=D_BG)
         
@@ -48,7 +49,7 @@ class VideoAnalyzerApp(ctk.CTk):
         self.sidebar.grid_propagate(False)
 
         ctk.CTkLabel(self.sidebar, text="VTED", font=ctk.CTkFont(size=28, weight="bold"), text_color=D_ACCENT).pack(pady=(30, 0))
-        ctk.CTkLabel(self.sidebar, text="Forensic Engine v2.2", font=ctk.CTkFont(size=12), text_color=D_TEXT).pack(pady=(0, 40))
+        ctk.CTkLabel(self.sidebar, text="Forensic Engine v3.0", font=ctk.CTkFont(size=12), text_color=D_TEXT).pack(pady=(0, 40))
 
         # Main Navigation
         self.upload_btn = self._create_sidebar_btn("Upload Video", self._upload_video, color=D_ACCENT)
@@ -62,6 +63,11 @@ class VideoAnalyzerApp(ctk.CTk):
         self.summary_btn = self._create_sidebar_btn("Forensic Summary", self._download_summary, state="disabled")
         self.zip_btn = self._create_sidebar_btn("Export All (ZIP)", self._download_zip, state="disabled")
         self.folder_btn = self._create_sidebar_btn("Open Results Folder", self._open_results, state="disabled")
+
+        # Synthetic Test Category
+        ctk.CTkLabel(self.sidebar, text="SYNTHETIC VALIDATION", font=ctk.CTkFont(size=11, weight="bold"), text_color="#586069").pack(pady=(40, 10))
+        self.gen_drop_btn = self._create_sidebar_btn("Gen Synthetic DROP", self._gen_synthetic_drop, state="disabled")
+        self.gen_merge_btn = self._create_sidebar_btn("Gen Synthetic MERGE", self._gen_synthetic_merge, state="disabled")
 
         # 2. Main Interface (Center)
         self.main_view = ctk.CTkFrame(self, fg_color=D_BG, corner_radius=0)
@@ -77,7 +83,7 @@ class VideoAnalyzerApp(ctk.CTk):
 
         self.desc_box = ctk.CTkTextbox(self.main_view, height=200, fg_color=D_CARD, text_color=D_TEXT, font=ctk.CTkFont(size=13), border_width=1, border_color="#30363D")
         self.desc_box.pack(fill="x", padx=10, pady=(0, 10))
-        self.desc_box.insert("0.0", "VTED v2.2 | Forensic Temporal Validator\nStep 1: Upload a broadcast video segment.")
+        self.desc_box.insert("0.0", "VTED v3.0 | Forensic Temporal Validator\nStep 1: Upload a broadcast video segment (0.1s - 10s).")
 
         # 3. Summary Panel (Right)
         self.summary_panel = ctk.CTkFrame(self, fg_color=D_CARD, corner_radius=15)
@@ -119,7 +125,10 @@ class VideoAnalyzerApp(ctk.CTk):
         path = filedialog.askopenfilename(parent=self, filetypes=[("Video Files", "*.mp4 *.avi *.mkv *.mov")])
         if path:
             self.video_path = os.path.abspath(path)
+            self.upload_btn.configure(state="normal", border_color=D_ACCENT, fg_color="#21262D")
             self.analyze_btn.configure(state="normal", border_color=D_ACCENT, fg_color="#21262D")
+            self.gen_drop_btn.configure(state="normal")
+            self.gen_merge_btn.configure(state="normal")
             fname = os.path.basename(path)
             self.stats_displays["Video Name"].configure(text=fname[:20] + ".." if len(fname) > 20 else fname)
             self.status_text.configure(text="Video Loaded Successfully")
@@ -195,15 +204,43 @@ class VideoAnalyzerApp(ctk.CTk):
         self._toggle_buttons("normal")
 
     def _toggle_buttons(self, state):
-        btns = [self.csv_btn, self.pdf_btn, self.summary_btn, self.zip_btn, self.folder_btn, self.upload_btn, self.analyze_btn]
+        btns = [
+            self.csv_btn, self.pdf_btn, self.summary_btn, self.zip_btn, 
+            self.folder_btn, self.upload_btn, self.analyze_btn,
+            self.gen_drop_btn, self.gen_merge_btn
+        ]
         for b in btns:
             b.configure(state=state, border_color=D_ACCENT if state == "normal" else "#30363D")
 
+    def _gen_synthetic_drop(self):
+        if not self.video_path: return
+        out_path = filedialog.asksaveasfilename(parent=self, defaultextension=".mp4", initialfile="synthetic_drop.mp4")
+        if out_path:
+            self.status_text.configure(text="Generating DROP...")
+            threading.Thread(target=self._run_gen, args=(VideoAnalyzer.generate_synthetic_drop, out_path), daemon=True).start()
+
+    def _gen_synthetic_merge(self):
+        if not self.video_path: return
+        out_path = filedialog.asksaveasfilename(parent=self, defaultextension=".mp4", initialfile="synthetic_merge.mp4")
+        if out_path:
+            self.status_text.configure(text="Generating MERGE...")
+            threading.Thread(target=self._run_gen, args=(VideoAnalyzer.generate_synthetic_merge, out_path), daemon=True).start()
+
+    def _run_gen(self, func, out_path):
+        try:
+            func(self.video_path, out_path)
+            self.after(0, lambda: messagebox.showinfo("Success", f"Synthetic test video created:\n{out_path}"))
+            self.after(0, lambda: self.status_text.configure(text="Generation Complete"))
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Error", f"Generation failed:\n{str(e)}"))
+
     def _jump_to_fail(self, results):
         try:
-            frame_idx = int(results[results['status'] != 'NORMAL'].iloc[0]['frame'])
+            # Match v3.0 column name frame_index
+            anomaly = results[results['status'] != 'NORMAL'].iloc[0]
+            frame_idx = int(anomaly['frame_index'])
             cap = cv2.VideoCapture(self.video_path)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx - 1)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if ret: self._update_preview(frame, is_anomaly=True)
             cap.release()
